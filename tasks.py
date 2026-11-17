@@ -8,6 +8,8 @@ class RoKTasks:
 
     # Game viewport calibrated for 1280x720.
     HOME_ROI = (0, 440, 230, 720)
+    # Scout Camp chỉ được tìm trong vùng thành phố; loại vùng chat/nút dưới màn hình.
+    SCOUT_CAMP_ROI = (250, 90, 1120, 600)
     SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
@@ -140,25 +142,66 @@ class RoKTasks:
         return roi
 
     def _return_home_if_visible(self):
+        """
+        Xác định trạng thái bằng Scout Camp trước.
+        btn_home có thể khớp nhầm nút tròn xanh khi đang ở thành phố,
+        vì vậy tuyệt đối không bấm btn_home nếu Scout Camp đã hiện đúng ROI.
+        """
         if self.stop.is_set():
             return False
 
-        match = self._find("btn_home", roi=self.HOME_ROI)
-        if match is None:
+        screen = self._capture()
+        camp = self.rec.locate(
+            screen,
+            "scout_camp",
+            threshold=0.88,
+            roi=self.SCOUT_CAMP_ROI,
+        )
+        if camp is not None:
             self.log(
-                "Không thấy btn_home tại góc dưới trái; "
-                "tiếp tục kiểm tra trạng thái thành phố."
+                "Đang ở nhà chính: Scout Camp hợp lệ "
+                f"(score={camp['score']:.3f}, "
+                f"tọa độ=({camp['x']},{camp['y']})); bỏ qua btn_home."
             )
             return True
 
-        self.log(
-            f"Phát hiện btn_home ({match['score']:.3f}); "
-            "đang quay về thành phố."
+        # Chỉ thử nút về thành phố khi không thấy Scout Camp trong vùng hợp lệ.
+        home = self.rec.locate(
+            screen,
+            "btn_home",
+            threshold=0.90,
+            roi=self.HOME_ROI,
         )
-        if not self._tap_match("btn_home", match):
+        if home is None:
+            self.log(
+                "Không xác nhận được nhà chính hoặc nút btn_home; "
+                "không click để tránh thao tác nhầm."
+            )
             return False
 
-        self._wait(0.55, 0.85)
+        self.log(
+            f"Không thấy Scout Camp; phát hiện btn_home "
+            f"({home['score']:.3f}), đang thử quay về thành phố."
+        )
+        if not self._tap_match("btn_home", home):
+            return False
+
+        # Xác minh sau click. Không tiếp tục dò trại nếu màn hình chưa về thành phố.
+        camp_after = self._wait_for_template(
+            "scout_camp",
+            timeout=8.0,
+            interval=0.4,
+            roi=self.SCOUT_CAMP_ROI,
+            threshold=0.88,
+        )
+        if camp_after is None:
+            self.log(
+                "Đã bấm btn_home nhưng chưa xác minh được Scout Camp; "
+                "dừng chu trình để tránh click sai."
+            )
+            return False
+
+        self.log("Đã xác minh trở về nhà chính.")
         return True
 
     def _find_explore_button_with_scroll(self):
@@ -329,6 +372,8 @@ class RoKTasks:
             camp_match = self._wait_for_template(
                 "scout_camp",
                 timeout=7,
+                roi=self.SCOUT_CAMP_ROI,
+                threshold=0.88,
             )
             if camp_match is None:
                 self.log("Không tìm thấy scout_camp; dừng an toàn.")
