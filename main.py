@@ -117,6 +117,7 @@ class RoKAutoApp(ctk.CTk):
         ctk.CTkButton(controls, text="Stop", width=130, command=self.stop_tasks, fg_color="#9B3434", hover_color="#762828").pack(side="left", padx=7, pady=10)
         ctk.CTkButton(controls, text="Chụp màn hình", width=130, command=self.save_screenshot, fg_color="gray").pack(side="left", padx=7, pady=10)
         ctk.CTkButton(controls, text="Kiểm tra template", width=150, command=self.check_templates).pack(side="left", padx=7, pady=10)
+        ctk.CTkButton(controls, text="Test tọa độ Scout", width=150, command=self.test_scout_coordinates, fg_color="#287A55").pack(side="left", padx=7, pady=10)
 
         ctk.CTkLabel(self, text="Log hoạt động", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=18, pady=(8, 0))
         self.log_box = ctk.CTkTextbox(self, height=250)
@@ -186,6 +187,29 @@ class RoKAutoApp(ctk.CTk):
         except Exception as exc:
             self._log(f"Lỗi chụp màn hình: {exc}")
             messagebox.showerror("Screenshot", str(exc))
+
+    def test_scout_coordinates(self):
+        """Run a one-shot coordinate test; do not start the automation loop."""
+        if self.worker and self.worker.is_alive():
+            self._log("Không thể test tọa độ khi tác vụ khác đang chạy.")
+            return
+        if not self.adb_connected:
+            messagebox.showwarning("ADB", "Hãy kết nối BlueStacks trước.")
+            return
+        required = ["scout_camp.png", "scout_icon.png", "btn_explore_1.png"]
+        missing = [name for name in required if not (TEMPLATE_DIR / name).is_file()]
+        if missing:
+            messagebox.showerror("Thiếu template", "Thiếu:\\n" + "\\n".join(missing))
+            return
+
+        self.stop_event.clear()
+        self.tasks = RoKTasks(self.adb, self.recognizer, self._log, self.stop_event)
+        self.worker = threading.Thread(
+            target=self.tasks.run_scout_coordinate_test,
+            daemon=True,
+        )
+        self.worker.start()
+        self._log("Đã bắt đầu test một lần: Scout Camp -> Scout Icon -> xác minh bảng.")
 
     def start_tasks(self):
         if self.worker and self.worker.is_alive():
