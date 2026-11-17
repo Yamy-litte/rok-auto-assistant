@@ -20,28 +20,23 @@ TEMPLATES = [
     "btn_send_scout",
 ]
 
-# ROI khớp với vị trí UI trong game 1280x720.
 ROI_BY_TEMPLATE = {
     "btn_home": (0, 440, 230, 720),
-    "btn_explore_1": (800, 140, 1190, 720),
+    "btn_explore_1": (820, 240, 1190, 690),
     "btn_send_scout": (760, 100, 1280, 720),
 }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Chẩn đoán template theo cùng thuật toán với RoK Assistant."
+        description="Chẩn đoán template bằng cùng recognizer của ứng dụng."
     )
+    parser.add_argument("--template", choices=TEMPLATES)
+    parser.add_argument("--threshold", type=float, default=0.82)
     parser.add_argument(
-        "--template",
-        choices=TEMPLATES,
-        help="Chỉ kiểm tra một template ở trạng thái màn hình hiện tại.",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.82,
-        help="Ngưỡng nhận diện mặc định (default: 0.82).",
+        "--all",
+        action="store_true",
+        help="Tìm tất cả nút cùng tên; hữu ích với btn_explore_1.",
     )
     args = parser.parse_args()
 
@@ -51,8 +46,8 @@ def main():
     screenshot_path = ROOT / "diagnostic_screen.png"
     adb.screenshot(str(screenshot_path))
     print(f"Screenshot: {screenshot_path}")
-    print(f"Kích thước screenshot: {adb.screenshot_size}")
-    print(f"Kích thước Android: {adb.get_display_size()}")
+    print(f"Screenshot size: {adb.screenshot_size}")
+    print(f"Android input size: {adb.get_display_size()}")
 
     recognizer = ImageRecognizer(
         template_dir=str(TEMPLATE_DIR),
@@ -61,44 +56,59 @@ def main():
 
     selected = [args.template] if args.template else TEMPLATES
 
-    print("\n========== TEMPLATE DIAGNOSTIC ==========")
     for name in selected:
-        path = TEMPLATE_DIR / f"{name}.png"
-        if not path.is_file():
-            print(f"{name}: MISSING FILE ({path})")
+        template_path = TEMPLATE_DIR / f"{name}.png"
+        if not template_path.is_file():
+            print(f"{name}: MISSING ({template_path})")
             continue
 
         roi = ROI_BY_TEMPLATE.get(name)
-        match = recognizer.locate(
-            str(screenshot_path),
-            name,
-            threshold=0.0,
-            roi=roi,
-        )
-        info = recognizer.last_scores.get(name, {})
-        score = info.get("score", -1)
-        scale = info.get("scale")
-        location = info.get("location")
 
-        print(
-            f"{name}: score={score:.4f}, "
-            f"scale={scale}, location={location}, roi={roi}"
-        )
-
-        if match is not None:
-            debug_path = recognizer.draw_debug(
+        if args.all or name == "btn_explore_1":
+            matches = recognizer.locate_all(
                 str(screenshot_path),
                 name,
-                match,
+                threshold=args.threshold,
+                roi=roi,
+                max_matches=12,
+                yellow_only=(name == "btn_explore_1"),
             )
-            print(
-                f"  MATCH center=({match['x']},{match['y']}), "
-                f"box={match['box']}, debug={debug_path}"
+            print(f"\n{name}: {len(matches)} match(es)")
+            for index, match in enumerate(matches, start=1):
+                print(
+                    f"  {index}. score={match['score']:.3f}, "
+                    f"center=({match['x']},{match['y']}), "
+                    f"box={match['box']}, "
+                    f"yellow={match.get('yellow_ratio')}"
+                )
+            output = recognizer.draw_debug_all(
+                str(screenshot_path),
+                name,
+                matches,
             )
+            print(f"  debug={output}")
         else:
-            print("  Không tìm được vị trí ứng viên.")
+            match = recognizer.locate(
+                str(screenshot_path),
+                name,
+                threshold=args.threshold,
+                roi=roi,
+            )
+            print(f"\n{name}: {match}")
+            print(f"  best={recognizer.last_scores.get(name)}")
+            if match:
+                print(
+                    "  debug="
+                    + str(
+                        recognizer.draw_debug(
+                            str(screenshot_path),
+                            name,
+                            match,
+                        )
+                    )
+                )
 
-    print("\nHoàn tất. Hãy kiểm tra diagnostic_screen.png và debug_*.png.")
+    print("\nHoàn tất chẩn đoán.")
 
 
 if __name__ == "__main__":

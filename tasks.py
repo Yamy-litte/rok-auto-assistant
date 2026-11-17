@@ -6,12 +6,11 @@ from pathlib import Path
 class RoKTasks:
     """RoK tasks controlled by ADB and color-aware OpenCV templates."""
 
-    # Các vùng tìm kiếm trên screenshot 1280x720 của game.
+    # Game viewport calibrated for 1280x720.
     HOME_ROI = (0, 440, 230, 720)
-    EXPLORE_LIST_ROI = (800, 140, 1190, 720)
+    SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
-    # Vuốt danh sách từ dưới lên trên, tối đa hai lần.
     SCOUT_SCROLL_START = (640, 625)
     SCOUT_SCROLL_END = (640, 355)
     SCOUT_SCROLL_DURATION_MS = 380
@@ -35,41 +34,28 @@ class RoKTasks:
     def _capture(self):
         return self.adb.screenshot(self.last_screen)
 
-    def _locate(self, screenshot, template_name):
-        if template_name == "btn_home":
-            return self.rec.locate(
-                screenshot,
-                template_name,
-                roi=self.HOME_ROI,
-            )
-
+    def _locate(self, screenshot, template_name, roi=None):
         if template_name == "btn_explore_1":
-            # Color matching + right-side list ROI: blue "ĐI" buttons
-            # should not match the yellow available-scout button.
             return self.rec.locate_color(
                 screenshot,
                 template_name,
-                roi=self.EXPLORE_LIST_ROI,
+                roi=roi or self.SCOUT_LIST_ROI,
             )
+        return self.rec.locate(
+            screenshot,
+            template_name,
+            roi=roi,
+        )
 
-        if template_name == "btn_send_scout":
-            return self.rec.locate(
-                screenshot,
-                template_name,
-                roi=self.SEND_PANEL_ROI,
-            )
-
-        return self.rec.locate(screenshot, template_name)
-
-    def _find(self, template_name):
+    def _find(self, template_name, roi=None):
         screenshot = self._capture()
-        return self._locate(screenshot, template_name)
+        return self._locate(screenshot, template_name, roi=roi)
 
     def _tap_match(self, template_name, match):
         if self.stop.is_set() or match is None:
             return False
 
-        # Click đúng anchor do recognizer trả về, không cộng jitter.
+        # Use exact template anchor; no random coordinate offset.
         screen_x = int(match["x"])
         screen_y = int(match["y"])
 
@@ -82,15 +68,14 @@ class RoKTasks:
             if debug_path:
                 self.log(f"[DEBUG] {debug_path}")
 
-        device_x, device_y = self.adb.tap(screen_x, screen_y)
-
+        android_x, android_y = self.adb.tap(screen_x, screen_y)
         self.log(
             f"[TAP] {template_name} | "
             f"score={match['score']:.3f} | "
             f"screen=({screen_x},{screen_y}) | "
-            f"android=({device_x},{device_y})"
+            f"android=({android_x},{android_y})"
         )
-        self._wait()
+        self._wait(0.25, 0.40)
         return True
 
     def _wait_for_template(
@@ -98,38 +83,78 @@ class RoKTasks:
         template_name,
         timeout=8.0,
         interval=0.30,
+        roi=None,
+        threshold=None,
     ):
         deadline = time.monotonic() + timeout
 
         while not self.stop.is_set() and time.monotonic() < deadline:
             screenshot = self._capture()
-            match = self._locate(screenshot, template_name)
+            if threshold is None:
+                match = self._locate(
+                    screenshot, template_name, roi=roi
+                )
+            else:
+                match = self.rec.locate(
+                    screenshot,
+                    template_name,
+                    threshold=threshold,
+                    roi=roi,
+                )
 
             if match is not None:
                 self.log(
                     f"Đã nhận diện {template_name}: "
-                    f"{match['score']:.3f}"
+                    f"{match['score']:.3f}, "
+                    f"tọa độ=({match['x']},{match['y']})"
                 )
                 return match
 
             self.stop.wait(interval)
 
+        info = getattr(self.rec, "last_scores", {}).get(template_name)
+        if info:
+            self.log(
+                f"Hết thời gian tìm {template_name}; "
+                f"best_score={info.get('score', -1):.3f}, "
+                f"ROI={info.get('roi')}"
+            )
         return None
 
+    def _scout_icon_roi(self, camp_match):
+        """
+        The binocular action icon appears immediately below/around the
+        selected Scout Camp. Limit matching to the local interaction area
+        around the detected camp rather than searching the entire screen.
+        """
+        screen_w, screen_h = self.adb.screenshot_size or (1280, 720)
+        x, y, width, height = camp_match["box"]
+
+        roi = (
+            max(0, x - int(width * 0.65)),
+            max(0, y + int(height * 0.20)),
+            min(screen_w, x + int(width * 1.65)),
+            min(screen_h, y + int(height * 1.85)),
+        )
+        self.log(f"Vùng tìm scout_icon quanh Trại Trinh Sát: {roi}")
+        return roi
+
     def _return_home_if_visible(self):
-        """Chỉ nhấn nút Home khi nhận diện được trong vùng góc dưới bên trái."""
         if self.stop.is_set():
             return False
 
-        match = self._find("btn_home")
+        match = self._find("btn_home", roi=self.HOME_ROI)
         if match is None:
             self.log(
-                "Không thấy btn_home trong vùng nút điều hướng; "
-                "giả định đang ở thành phố."
+                "Không thấy btn_home tại góc dưới trái; "
+                "tiếp tục kiểm tra trạng thái thành phố."
             )
             return True
 
-        self.log("Phát hiện btn_home; đang quay về thành phố.")
+        self.log(
+            f"Phát hiện btn_home ({match['score']:.3f}); "
+            "đang quay về thành phố."
+        )
         if not self._tap_match("btn_home", match):
             return False
 
@@ -137,23 +162,51 @@ class RoKTasks:
         return True
 
     def _find_explore_button_with_scroll(self):
-        """Tìm nút vàng trước, rồi cuộn danh sách tối đa hai lần."""
+        """Find all yellow Explore buttons; scroll upward at most twice."""
         for attempt in range(self.MAX_SCOUT_SCROLLS + 1):
             if self.stop.is_set():
                 return None
 
-            match = self._find("btn_explore_1")
-            if match is not None:
+            screenshot = self._capture()
+
+            matches = self.rec.locate_all(
+                screenshot,
+                "btn_explore_1",
+                threshold=0.82,
+                roi=self.SCOUT_LIST_ROI,
+                max_matches=8,
+                yellow_only=True,
+            )
+
+            if matches:
                 self.log(
-                    f"Tìm thấy nút Khám phá sau {attempt} lần cuộn; "
-                    f"score={match['score']:.3f}."
+                    f"Tìm thấy {len(matches)} nút Thăm dò màu vàng "
+                    f"sau {attempt} lần cuộn."
                 )
-                return match
+                for index, candidate in enumerate(matches, start=1):
+                    self.log(
+                        f"Ứng viên {index}: "
+                        f"y={candidate['y']}, "
+                        f"score={candidate['score']:.3f}, "
+                        f"yellow={candidate.get('yellow_ratio', 0):.2f}"
+                    )
+
+                debug_path = self.rec.draw_debug_all(
+                    screenshot,
+                    "btn_explore_1",
+                    matches,
+                )
+                if debug_path:
+                    self.log(f"[DEBUG MULTI] {debug_path}")
+
+                # Return the topmost yellow button. Busy blue "Đi" buttons
+                # are rejected by BGR matching and yellow-pixel validation.
+                return matches[0]
 
             if attempt < self.MAX_SCOUT_SCROLLS:
                 self.log(
-                    f"Chưa thấy btn_explore_1; "
-                    f"vuốt lần {attempt + 1}/{self.MAX_SCOUT_SCROLLS}."
+                    f"Chưa thấy nút vàng; vuốt danh sách "
+                    f"{attempt + 1}/{self.MAX_SCOUT_SCROLLS}."
                 )
                 self.adb.swipe(
                     *self.SCOUT_SCROLL_START,
@@ -167,7 +220,6 @@ class RoKTasks:
     def _close_scout_panel_and_return_home(self):
         if self.stop.is_set():
             return
-
         try:
             self.adb.back()
             self._wait(0.35, 0.55)
@@ -180,30 +232,27 @@ class RoKTasks:
     # --------------------------------------------------
     def run_fog_cycle(self):
         """
-        Gửi lần lượt từng trinh sát rảnh.
-        Trả status='exhausted' khi không còn btn_explore_1 sau tối đa
-        hai lần cuộn; main.py sẽ ngủ theo thời gian người dùng cấu hình.
+        Send free scouts one by one.
+        status='exhausted' means no yellow btn_explore_1 remains after
+        the initial scan and up to two upward swipes.
         """
         sent_count = 0
 
         while not self.stop.is_set():
             self.log("========== CHU TRÌNH DÒ MÂY ==========")
 
-            # STEP 1: Nếu btn_home xuất hiện, quay về thành phố.
+            # STEP 1: Return to city if btn_home is visible.
             if not self._return_home_if_visible():
                 return {"status": "error", "sent": sent_count}
 
-            # STEP 2: Mở Trại Trinh Sát và nhấn biểu tượng ống nhòm.
+            # STEP 2: Find and select Scout Camp.
             self.log("Bước 2: Tìm Trại Trinh Sát.")
             camp_match = self._wait_for_template(
                 "scout_camp",
                 timeout=7,
             )
             if camp_match is None:
-                self.log(
-                    "Không tìm thấy scout_camp. "
-                    "Dừng để kiểm tra trạng thái màn hình."
-                )
+                self.log("Không tìm thấy scout_camp; dừng an toàn.")
                 return {"status": "error", "sent": sent_count}
 
             if not self._tap_match("scout_camp", camp_match):
@@ -211,12 +260,18 @@ class RoKTasks:
 
             self._wait(0.4, 0.65)
 
+            # Find the binocular icon only near the selected Scout Camp.
+            scout_roi = self._scout_icon_roi(camp_match)
             scout_icon_match = self._wait_for_template(
                 "scout_icon",
                 timeout=7,
+                roi=scout_roi,
             )
             if scout_icon_match is None:
-                self.log("Không tìm thấy scout_icon sau khi chọn Trại Trinh Sát.")
+                self.log(
+                    "Không tìm thấy scout_icon trong vùng tương tác "
+                    "quanh Trại Trinh Sát."
+                )
                 return {"status": "error", "sent": sent_count}
 
             if not self._tap_match("scout_icon", scout_icon_match):
@@ -224,8 +279,8 @@ class RoKTasks:
 
             self._wait(0.4, 0.65)
 
-            # STEP 3: Tìm nút vàng Khám phá; cuộn tối đa hai lần.
-            self.log("Bước 3: Tìm nút Khám phá của trinh sát rảnh.")
+            # STEP 3: Find the available yellow Explore button.
+            self.log("Bước 3: Tìm nút Khám phá màu vàng.")
             explore_1_match = self._find_explore_button_with_scroll()
 
             if self.stop.is_set():
@@ -233,8 +288,7 @@ class RoKTasks:
 
             if explore_1_match is None:
                 self.log(
-                    "Không còn btn_explore_1 sau hai lần cuộn. "
-                    "Hoàn tất đợt gửi trinh sát."
+                    "Không còn nút Khám phá màu vàng sau tối đa hai lần cuộn."
                 )
                 self._close_scout_panel_and_return_home()
                 return {"status": "exhausted", "sent": sent_count}
@@ -242,7 +296,7 @@ class RoKTasks:
             if not self._tap_match("btn_explore_1", explore_1_match):
                 return {"status": "stopped", "sent": sent_count}
 
-            # STEP 4: Chờ camera chuyển đến vùng sương mù.
+            # STEP 4: Wait for the map camera, then select the fog area.
             wait_seconds = random.uniform(1.8, 2.5)
             self.log(f"Chờ bản đồ di chuyển {wait_seconds:.2f} giây.")
             if self.stop.wait(wait_seconds):
@@ -254,8 +308,7 @@ class RoKTasks:
             )
             if explore_2_match is None:
                 self.log(
-                    "Không tìm thấy btn_explore_2. "
-                    "Dừng để tránh nhấn sai giao diện."
+                    "Không tìm thấy btn_explore_2; dừng để tránh click nhầm."
                 )
                 return {"status": "error", "sent": sent_count}
 
@@ -264,15 +317,15 @@ class RoKTasks:
 
             self._wait(0.35, 0.55)
 
-            # STEP 5: Nhấn nút Gửi trên bảng điều quân.
+            # STEP 5: Send scout.
             send_match = self._wait_for_template(
                 "btn_send_scout",
                 timeout=9,
+                roi=self.SEND_PANEL_ROI,
             )
             if send_match is None:
                 self.log(
-                    "Không tìm thấy btn_send_scout. "
-                    "Dừng để kiểm tra bảng điều quân."
+                    "Không tìm thấy btn_send_scout trong bảng điều quân."
                 )
                 return {"status": "error", "sent": sent_count}
 
@@ -281,13 +334,13 @@ class RoKTasks:
 
             sent_count += 1
             self.log(
-                f"Đã gửi trinh sát thứ {sent_count}. "
-                "Quay lại Bước 1 để kiểm tra trinh sát tiếp theo."
+                f"Đã gửi trinh sát thứ {sent_count}; "
+                "quay lại Bước 1 và chụp màn hình mới."
             )
             self._wait(0.6, 0.9)
 
-            # STEP 6: Không giữ lại tọa độ cũ; vòng lặp chụp ảnh mới
-            # và quay lại Bước 1 để kiểm tra btn_home.
+            # Next loop returns to STEP 1. No old coordinates are reused.
+
         return {"status": "stopped", "sent": sent_count}
 
     # --------------------------------------------------
