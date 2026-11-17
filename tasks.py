@@ -8,8 +8,10 @@ class RoKTasks:
 
     # Game viewport calibrated for 1280x720.
     HOME_ROI = (0, 440, 230, 720)
-    # Scout Camp chỉ được tìm trong vùng thành phố; loại vùng chat/nút dưới màn hình.
-    SCOUT_CAMP_ROI = (250, 90, 1120, 600)
+    # ROI hiệu chuẩn theo vị trí Scout Camp đã xác nhận trên màn hình 1280x720.
+    # Không mở rộng toàn thành phố: các công trình khác ở bên phải có thể
+    # cho điểm template cao giả (ví dụ x=956, y=328) và làm lệch ROI scout_icon.
+    SCOUT_CAMP_ROI = (480, 150, 850, 450)
     SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
