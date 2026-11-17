@@ -13,7 +13,10 @@ class RoKTasks:
     # cho điểm template cao giả (ví dụ x=956, y=328) và làm lệch ROI scout_icon.
     # Vị trí Scout Camp đã được xác nhận trên giao diện 1280x720.
     # ROI hẹp loại bỏ các đảo trên world map từng khớp giả với template.
-    SCOUT_CAMP_ROI = (620, 245, 750, 355)
+    # ROI dùng tọa độ góc trên-trái của template, không phải anchor click.
+    # Vị trí camp thật có anchor khoảng (673,294), box bắt đầu x~603;
+    # false match trên world map có box bắt đầu x~536 nên bị loại.
+    SCOUT_CAMP_ROI = (560, 190, 800, 390)
     SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
