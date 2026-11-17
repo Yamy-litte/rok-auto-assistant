@@ -11,7 +11,9 @@ class RoKTasks:
     # ROI hiệu chuẩn theo vị trí Scout Camp đã xác nhận trên màn hình 1280x720.
     # Không mở rộng toàn thành phố: các công trình khác ở bên phải có thể
     # cho điểm template cao giả (ví dụ x=956, y=328) và làm lệch ROI scout_icon.
-    SCOUT_CAMP_ROI = (480, 150, 850, 450)
+    # Vị trí Scout Camp đã được xác nhận trên giao diện 1280x720.
+    # ROI hẹp loại bỏ các đảo trên world map từng khớp giả với template.
+    SCOUT_CAMP_ROI = (620, 245, 750, 355)
     SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
@@ -132,15 +134,19 @@ class RoKTasks:
         around the detected camp rather than searching the entire screen.
         """
         screen_w, screen_h = self.adb.screenshot_size or (1280, 720)
-        x, y, width, height = camp_match["box"]
+        _, _, width, height = camp_match["box"]
+        anchor_x, anchor_y = camp_match["x"], camp_match["y"]
 
+        # Scout Icon thật nằm chếch xuống-phải khỏi tâm công trình.
+        # Không tìm sát/trên tâm Scout Camp: khu vực đó trên world map
+        # từng tạo match giả cùng tọa độ (606,244).
         roi = (
-            max(0, x - int(width * 0.65)),
-            max(0, y + int(height * 0.20)),
-            min(screen_w, x + int(width * 1.65)),
-            min(screen_h, y + int(height * 1.85)),
+            max(0, anchor_x + int(width * 0.25)),
+            max(0, anchor_y + int(height * 0.25)),
+            min(screen_w, anchor_x + int(width * 1.25)),
+            min(screen_h, anchor_y + int(height * 1.35)),
         )
-        self.log(f"Vùng tìm scout_icon quanh Trại Trinh Sát: {roi}")
+        self.log(f"Vùng tìm scout_icon phía dưới-phải Scout Camp: {roi}")
         return roi
 
     def _return_home_if_visible(self):
@@ -264,13 +270,17 @@ class RoKTasks:
 
     def _close_scout_panel_and_return_home(self):
         if self.stop.is_set():
-            return
+            return False
         try:
             self.adb.back()
             self._wait(0.35, 0.55)
-            self._return_home_if_visible()
+            verified = self._return_home_if_visible()
+            if not verified:
+                self.log("Không xác minh được nhà chính sau khi đóng bảng trinh sát.")
+            return verified
         except Exception as exc:
             self.log(f"Không thể đóng bảng trinh sát: {exc}")
+            return False
 
     # --------------------------------------------------
     # Coordinate calibration: Scout Camp -> Scout icon
@@ -416,7 +426,9 @@ class RoKTasks:
                 self.log(
                     "Không còn nút Khám phá màu vàng sau tối đa hai lần cuộn."
                 )
-                self._close_scout_panel_and_return_home()
+                if not self._close_scout_panel_and_return_home():
+                    self.log("Không thể xác minh trạng thái nhà chính; không kết luận hết trinh sát.")
+                    return {"status": "error", "sent": sent_count}
                 return {"status": "exhausted", "sent": sent_count}
 
             if not self._tap_match("btn_explore_1", explore_1_match):
