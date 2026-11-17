@@ -228,6 +228,85 @@ class RoKTasks:
             self.log(f"Không thể đóng bảng trinh sát: {exc}")
 
     # --------------------------------------------------
+    # Coordinate calibration: Scout Camp -> Scout icon
+    # --------------------------------------------------
+    def run_scout_coordinate_test(self):
+        """
+        Controlled click test. Start with the game showing the city.
+        Clicks only the Scout Camp and its binocular action icon, then
+        verifies that the scout-management panel is visible.
+        """
+        self.log("========== KIỂM TRA TỌA ĐỘ CLICK SCOUT ==========")
+        screen = self._capture()
+        self.log(
+            f"[SCREEN] screenshot={self.adb.screenshot_size}, "
+            f"android_input={self.adb.get_display_size(refresh=True)}"
+        )
+
+        camp = self.rec.locate(
+            screen, "scout_camp", threshold=0.82
+        )
+        if camp is None:
+            info = getattr(self.rec, "last_scores", {}).get("scout_camp", {})
+            self.log(
+                "TEST FAIL: Không tìm thấy scout_camp. "
+                f"best_score={info.get('score', -1):.3f}"
+            )
+            return False
+
+        self.log(
+            f"[MATCH] scout_camp score={camp['score']:.3f}, "
+            f"box={camp['box']}, anchor=({camp['x']},{camp['y']})"
+        )
+        if not self._tap_match("scout_camp", camp):
+            return False
+
+        self._wait(0.45, 0.65)
+        screen = self._capture()
+        scout_roi = self._scout_icon_roi(camp)
+        icon = self.rec.locate(
+            screen, "scout_icon", threshold=0.82, roi=scout_roi
+        )
+        if icon is None:
+            info = getattr(self.rec, "last_scores", {}).get("scout_icon", {})
+            self.log(
+                "TEST FAIL: Đã click trại nhưng không tìm thấy scout_icon "
+                f"trong ROI {scout_roi}; best_score={info.get('score', -1):.3f}"
+            )
+            return False
+
+        self.log(
+            f"[MATCH] scout_icon score={icon['score']:.3f}, "
+            f"box={icon['box']}, anchor=({icon['x']},{icon['y']})"
+        )
+        if not self._tap_match("scout_icon", icon):
+            return False
+
+        self._wait(0.55, 0.75)
+        panel_screen = self._capture()
+        explore = self.rec.locate_all(
+            panel_screen,
+            "btn_explore_1",
+            threshold=0.82,
+            roi=self.SCOUT_LIST_ROI,
+            max_matches=8,
+            yellow_only=True,
+        )
+        if explore:
+            self.log(
+                "TEST PASS: Click Scout Camp và Scout Icon thành công; "
+                "đã phát hiện bảng quản lý trinh sát "
+                f"(nút Khám phá vàng: {len(explore)})."
+            )
+            return True
+
+        self.log(
+            "TEST INCONCLUSIVE: Đã click Scout Icon nhưng chưa phát hiện "
+            "nút Khám phá vàng. Kiểm tra ảnh rok_screen.png và trạng thái game."
+        )
+        return False
+
+    # --------------------------------------------------
     # Fog exploration
     # --------------------------------------------------
     def run_fog_cycle(self):
