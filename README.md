@@ -1,66 +1,59 @@
-# RoK ADB Assistant (prototype)
+# RoK Auto Assistant
 
-Công cụ mẫu điều khiển giả lập Android qua ADB và nhận diện giao diện bằng OpenCV.
-Không inject bộ nhớ, không đọc dữ liệu nội bộ game. Đây là bộ khung cần hiệu chỉnh
-template theo đúng phiên bản game, ngôn ngữ và giao diện giả lập của bạn.
+Python desktop assistant for Rise of Kingdoms using ADB and OpenCV template matching.
 
-## 1. Cài đặt
+## Requirements
 
-- Cài Android SDK Platform Tools và thêm `adb` vào PATH.
-- Mở RoK trong giả lập, bật ADB debugging / Android debugging.
-- Đặt độ phân giải giả lập 1280x720 và DPI 240.
-- Python 3.10+.
+- Windows 10/11
+- Python 3.10+
+- BlueStacks with ADB enabled
+- Android Platform Tools
+- Display target: 1280x720 (DPI setting is configured in BlueStacks)
 
-```bash
+## Setup
+
+\`\`\`powershell
 python -m venv .venv
-# Windows:
 .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
-```
+\`\`\`
 
-## 2. Kết nối
+Edit \`ADB_PATH\` and \`DEFAULT_DEVICE\` in \`main.py\` if your local ADB path or BlueStacks port differs.
 
-Nhập địa chỉ ADB của giả lập, ví dụ `127.0.0.1:5555`.
-Port phụ thuộc giả lập; kiểm tra trong cài đặt ADB của BlueStacks/LDPlayer/MEmu.
-Không mặc định mọi giả lập đều dùng cùng port.
+## Scout templates
 
-## 3. Template cần tự chụp
+Required files in \`templates/\`:
 
-Cắt ảnh PNG sát biểu tượng/nút, không kèm vùng nền thừa, từ screenshot 1280x720:
+- \`btn_home.png\`
+- \`scout_camp.png\`
+- \`scout_icon.png\`
+- \`btn_explore_1.png\`
+- \`btn_explore_2.png\`
+- \`btn_send_scout.png\`
 
-- `scout_icon.png`: kính viễn vọng/trinh sát trên màn hình chính.
-- `scout_camp.png`: nút mở Scout Camp (nếu dùng cách này).
-- `explore.png`: nút Explore trong giao diện trinh sát.
-- `explore_confirm.png`: nút Explore xác nhận nếu phiên bản game có bước này.
-- `send.png`: nút Send.
-- `world_map.png`: nút trở về bản đồ thế giới.
-- `search_icon.png`: kính lúp tìm kiếm.
-- `food.png`, `wood.png`, `stone.png`, `gold.png`: biểu tượng loại mỏ trong bảng tìm kiếm.
-- `level_1.png` ... `level_6.png`: lựa chọn cấp mỏ.
-- `search_button.png`: nút Search trong bảng tìm kiếm.
-- `resource_node.png`: một mẫu nhận diện mỏ trên bản đồ (cắt vùng biểu tượng mỏ).
-- `gather.png`: nút Gather.
-- `new_troops.png`: nút New Troops.
-- `march.png`: nút March.
+The available-scout button is matched in BGR color and in a restricted list area so that the blue "ĐI" buttons are not treated as available scouts. \`btn_home\` is searched in the lower-left navigation area. Transparent PNG templates use alpha masks. The current \`btn_home.png\` contains the BlueStacks "Space" overlay; the recognizer applies a circular mask that ignores that label, but a clean crop without the overlay is still preferable.
 
-Các template phải khớp tỷ lệ hiển thị. Nếu game có nhiều giao diện khác nhau,
-hãy chụp template riêng và bổ sung logic lựa chọn. Không dùng ảnh nén/mờ.
+## Coordinate handling
 
-## 4. Những phần cần hiệu chỉnh trước khi chạy thật
+ADB screenshot dimensions are read from the PNG header. Android input dimensions are read from \`adb shell wm size\`. Tap and swipe coordinates are scaled between these spaces. The controller stops with an error when aspect ratios differ by more than 2%, rather than risking a wrong click.
 
-- Luồng RoK có thể khác theo phiên bản, trạng thái tài khoản, nhiệm vụ hướng dẫn,
-  popup, ngôn ngữ và số lượng đội quân. Prototype này chỉ thao tác khi tìm thấy template.
-- Chức năng farm hiện chưa có OCR để đọc chính xác `0/5`, chưa tự kiểm tra mỏ bị chiếm
-  và chưa tự đổi cấp mỏ. Cần bổ sung template trạng thái mỏ bận / quân đang tới,
-  hoặc OCR vùng số lượt và vòng lặp cấp độ có giới hạn.
-- `run_farm_cycle` hiện chọn tài nguyên đầu tiên được tích. Để luân phiên ưu tiên,
-  có thể mở rộng hàng đợi tài nguyên.
-- Không có cơ chế đảm bảo tránh phát hiện/khóa tài khoản. Random delay chỉ giúp UI
-  có thời gian phản hồi và giảm lỗi thao tác quá nhanh. Việc tự động hóa có thể vi phạm
-  điều khoản trò chơi; tự chịu trách nhiệm khi sử dụng.
+The recognizer logs the detected template, confidence score, screenshot coordinate and Android input coordinate. It writes \`debug_<template>.png\` with a green match rectangle and a red click-center marker.
 
-## 5. Lưu ý an toàn
+## Diagnose templates
 
-Chạy thử từng nút với tài khoản phụ, quan sát màn hình và dùng Stop nếu giao diện
-khác dự kiến. Không chạy khi có popup hoặc màn hình chưa được nhận diện.
+Make sure the game is in the relevant screen, then run one template at a time:
+
+\`\`\`powershell
+python diagnose_templates.py --template btn_home
+python diagnose_templates.py --template scout_icon
+python diagnose_templates.py --template btn_explore_1
+\`\`\`
+
+For \`btn_home\`, display the world map. For \`scout_icon\`, select the Scout Camp so its action icon is visible. For \`btn_explore_1\`, open Scout Management. Review the corresponding \`debug_*.png\` before running automation.
+
+## Current limitations
+
+- Resource gathering is still a basic template-driven flow. March-slot OCR and occupied-node fallback are not complete.
+- Template positions and ROIs are calibrated for the supplied 1280x720 BlueStacks game view and may need adjustment if the game viewport changes.
+- No method can guarantee that game automation will avoid anti-cheat detection or account penalties. Use cautiously and follow the game's terms.
