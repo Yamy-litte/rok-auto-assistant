@@ -186,7 +186,7 @@ class RoKTasks:
 
             self.log(
                 "Đã gửi trinh sát ở vòng trước; chủ động quay về thành phố "
-                f"(btn_home={home["score"]:.3f})."
+                f"(btn_home={home['score']:.3f})."
             )
             if not self._tap_match("btn_home", home):
                 return False
