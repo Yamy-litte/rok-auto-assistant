@@ -16,7 +16,8 @@ class RoKTasks:
     # ROI dùng tọa độ góc trên-trái của template, không phải anchor click.
     # Vị trí camp thật có anchor khoảng (673,294), box bắt đầu x~603;
     # false match trên world map có box bắt đầu x~536 nên bị loại.
-    SCOUT_CAMP_ROI = (560, 190, 800, 390)
+    # Loại vùng bản đồ thế giới từng tạo match giả ở mép trái ROI.
+    SCOUT_CAMP_ROI = (590, 190, 800, 390)
     SCOUT_LIST_ROI = (820, 240, 1190, 690)
     SEND_PANEL_ROI = (760, 100, 1280, 720)
 
@@ -30,6 +31,9 @@ class RoKTasks:
         self.rec = recognizer
         self.log = log
         self.stop = stop_event
+        # Sau khi gửi trinh sát, game chắc chắn đang ở bản đồ thế giới.
+        # Lượt kế tiếp phải bấm nút về thành phố, không suy đoán từ Scout Camp.
+        self._must_return_home_after_send = False
         self.last_screen = str(
             Path(__file__).resolve().parent / "rok_screen.png"
         )
@@ -162,10 +166,53 @@ class RoKTasks:
             return False
 
         screen = self._capture()
+
+        # Trạng thái đã biết từ thao tác gửi trinh sát trước đó: đang ở world map.
+        # Bắt buộc dùng nút Home để quay về, không cho match Scout Camp giả
+        # trên bản đồ thế giới đánh lừa bộ điều khiển.
+        if self._must_return_home_after_send:
+            home = self.rec.locate(
+                screen,
+                "btn_home",
+                threshold=0.90,
+                roi=self.HOME_ROI,
+            )
+            if home is None:
+                self.log(
+                    "Sau khi gửi trinh sát, không tìm thấy btn_home; "
+                    "không tiếp tục dò để tránh click nhầm."
+                )
+                return False
+
+            self.log(
+                "Đã gửi trinh sát ở vòng trước; chủ động quay về thành phố "
+                f"(btn_home={home["score"]:.3f})."
+            )
+            if not self._tap_match("btn_home", home):
+                return False
+
+            camp_after = self._wait_for_template(
+                "scout_camp",
+                timeout=8.0,
+                interval=0.4,
+                roi=self.SCOUT_CAMP_ROI,
+                threshold=0.90,
+            )
+            if camp_after is None:
+                self.log(
+                    "Đã bấm btn_home nhưng không xác minh được Scout Camp "
+                    "trong vùng thành phố; dừng an toàn."
+                )
+                return False
+
+            self._must_return_home_after_send = False
+            self.log("Đã quay về thành phố sau khi gửi trinh sát.")
+            return True
+
         camp = self.rec.locate(
             screen,
             "scout_camp",
-            threshold=0.88,
+            threshold=0.90,
             roi=self.SCOUT_CAMP_ROI,
         )
         if camp is not None:
@@ -474,6 +521,9 @@ class RoKTasks:
                 return {"status": "stopped", "sent": sent_count}
 
             sent_count += 1
+            # Xác lập trạng thái màn hình: thao tác gửi trinh sát đưa game
+            # trở lại bản đồ thế giới. Vòng tiếp theo phải bấm btn_home.
+            self._must_return_home_after_send = True
             self.log(
                 f"Đã gửi trinh sát thứ {sent_count}; "
                 "quay lại Bước 1 và chụp màn hình mới."
