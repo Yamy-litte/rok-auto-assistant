@@ -1,0 +1,13 @@
+﻿.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.log
+.env
+screen_debug.png
+diagnostic_screen.png
+diagnostic_result.png
+debug_*.png
+coord_test.png
+rok_screen.png
+*.zip
